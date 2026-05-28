@@ -1,0 +1,29 @@
+# Downloaded media
+raw/
+ready/
+logs/
+*.mp4
+*.mkv
+*.webm
+*.part
+*.ytdl
+*.temp
+
+# Python/project environment
+.venv/
+__pycache__/
+*.pyc
+
+# Private auth/cookies
+secrets/
+*cookies*.txt
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Local backups
+*.bak
+*.bak.*

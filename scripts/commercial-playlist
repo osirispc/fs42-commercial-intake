@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+PROJECT_DIR="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
+CONFIG_FILE="$PROJECT_DIR/config/intake.env"
+
+if [ ! -f "$CONFIG_FILE" ]; then
+  echo "Missing config file:"
+  echo "$CONFIG_FILE"
+  exit 1
+fi
+
+source "$CONFIG_FILE"
+
+URL="${1:-}"
+
+if [ -z "$URL" ]; then
+  echo "Usage:"
+  echo "  commercial-playlist 'YOUTUBE_PLAYLIST_URL'"
+  exit 1
+fi
+
+mkdir -p "$RAW_DIR" "$READY_DIR"
+
+echo "[COMMERCIAL INTAKE] Project: $PROJECT_DIR"
+echo "[COMMERCIAL INTAKE] Downloading playlist..."
+
+"${YTDLP_BIN:-yt-dlp}" \
+  --yes-playlist \
+  -f "bv*[height<=${MAX_HEIGHT}]+ba/b[height<=${MAX_HEIGHT}]" \
+  --merge-output-format mp4 \
+  -o "$RAW_DIR/%(playlist_index)03d-%(title).80s.%(ext)s" \
+  "$URL"
+
+echo "[COMMERCIAL INTAKE] Converting raw files..."
+
+shopt -s nullglob
+
+for f in "$RAW_DIR"/*.mp4 "$RAW_DIR"/*.webm "$RAW_DIR"/*.mkv; do
+  base="$(basename "$f")"
+  name="${base%.*}"
+
+  if [ -f "$READY_DIR/${name}.mp4" ]; then
+    echo "Skipping already converted: $name"
+    continue
+  fi
+
+  echo "Converting: $base"
+
+  ffmpeg -y -i "$f" \
+    -vf "scale='min(1280,iw)':-2,fps=30" \
+    -c:v libx264 -preset veryfast -crf "$VIDEO_CRF" \
+    -c:a aac -b:a "$AUDIO_BITRATE" \
+    -movflags +faststart \
+    "$READY_DIR/${name}.mp4"
+done
+
+if [ -n "${FS42_COMMERCIAL_DIR:-}" ] && [ -d "$FS42_COMMERCIAL_DIR" ]; then
+  echo
+  echo "[COMMERCIAL INTAKE] Copying ready commercials to FieldStation42..."
+  cp "$READY_DIR"/*.mp4 "$FS42_COMMERCIAL_DIR/" 2>/dev/null || true
+  echo "Copied to: $FS42_COMMERCIAL_DIR"
+fi
+
+echo
+echo "Playlist commercials ready in:"
+echo "$READY_DIR"
