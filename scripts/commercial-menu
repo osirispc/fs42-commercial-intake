@@ -1,0 +1,237 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+CONFIG_FILE="$PROJECT_DIR/config/intake.env"
+
+if [ -f "$CONFIG_FILE" ]; then
+  source "$CONFIG_FILE"
+else
+  RAW_DIR="$HOME/Videos/fieldstation42-commercials/raw"
+  READY_DIR="$HOME/Videos/fieldstation42-commercials/ready"
+fi
+
+RAW_DIR="${RAW_DIR:-$HOME/Videos/fieldstation42-commercials/raw}"
+READY_DIR="${READY_DIR:-$HOME/Videos/fieldstation42-commercials/ready}"
+CUTS_DIR="$PROJECT_DIR/cuts"
+FS42_DIR="$HOME/projects/FieldStation42"
+
+mkdir -p "$RAW_DIR" "$READY_DIR" "$CUTS_DIR"
+
+pause() {
+  echo
+  read -r -p "Press Enter to return to menu..."
+}
+
+choose_file_from_dir() {
+  local DIR="$1"
+  local LABEL="$2"
+
+  shopt -s nullglob
+  local FILES=("$DIR"/*.mp4 "$DIR"/*.mkv "$DIR"/*.webm)
+
+  if [ ${#FILES[@]} -eq 0 ]; then
+    echo "No video files found in: $DIR" >&2
+    return 1
+  fi
+
+  echo >&2
+  echo "$LABEL" >&2
+  echo "---------------------------------------------" >&2
+
+  select FILE in "${FILES[@]}"; do
+    if [ -n "${FILE:-}" ]; then
+      printf '%s\n' "$FILE"
+      return 0
+    fi
+    echo "Invalid selection." >&2
+  done
+}
+
+choose_cut_sheet() {
+  shopt -s nullglob
+  local FILES=("$CUTS_DIR"/*.txt)
+
+  if [ ${#FILES[@]} -eq 0 ]; then
+    echo "No cut sheets found in: $CUTS_DIR" >&2
+    return 1
+  fi
+
+  echo >&2
+  echo "Choose cut sheet:" >&2
+  echo "---------------------------------------------" >&2
+
+  select FILE in "${FILES[@]}"; do
+    if [ -n "${FILE:-}" ]; then
+      printf '%s\n' "$FILE"
+      return 0
+    fi
+    echo "Invalid selection." >&2
+  done
+}
+
+list_stations() {
+  echo
+  echo "Detected FieldStation42 station commercial folders:"
+  echo "---------------------------------------------"
+  find "$FS42_DIR/catalog" -type d \( -iname "commercial" -o -iname "commercials" \) 2>/dev/null | sort
+}
+
+choose_station_folder() {
+  mapfile -t STATIONS < <(find "$FS42_DIR/catalog" -type d \( -iname "commercial" -o -iname "commercials" \) 2>/dev/null | sort)
+
+  if [ ${#STATIONS[@]} -eq 0 ]; then
+    echo "No station commercial folders found under:" >&2
+    echo "$FS42_DIR/catalog" >&2
+    return 1
+  fi
+
+  echo >&2
+  echo "Choose station commercial folder:" >&2
+  echo "---------------------------------------------" >&2
+
+  select STATION in "${STATIONS[@]}"; do
+    if [ -n "${STATION:-}" ]; then
+      printf '%s\n' "$STATION"
+      return 0
+    fi
+    echo "Invalid selection." >&2
+  done
+}
+
+while true; do
+  clear
+  echo "================================================="
+  echo " FIELDSTATION42 COMMERCIAL INTAKE BAY"
+  echo "================================================="
+  echo
+  echo "Project: $PROJECT_DIR"
+  echo "Raw:     $RAW_DIR"
+  echo "Ready:   $READY_DIR"
+  echo "Cuts:    $CUTS_DIR"
+  echo
+  echo "1) Download one YouTube video"
+  echo "2) Download YouTube playlist"
+  echo "3) List raw downloads"
+  echo "4) List ready commercials"
+  echo "5) Mark cuts for any raw video"
+  echo "6) Cut clips from a cut sheet"
+  echo "7) Copy one ready commercial to a station"
+  echo "8) List station commercial folders"
+  echo "9) Show Git status"
+  echo "0) Exit"
+  echo
+  read -r -p "Choose an option: " CHOICE
+
+  case "$CHOICE" in
+    1)
+      echo
+      read -r -p "Paste YouTube video URL: " URL
+      commercial-one "$URL"
+      pause
+      ;;
+
+    2)
+      echo
+      read -r -p "Paste YouTube playlist URL: " URL
+      commercial-playlist "$URL"
+      pause
+      ;;
+
+    3)
+      echo
+      echo "Raw downloads:"
+      ls -lh "$RAW_DIR" || true
+      pause
+      ;;
+
+    4)
+      echo
+      echo "Ready commercials:"
+      ls -lh "$READY_DIR" || true
+      pause
+      ;;
+
+    5)
+      RAW_FILE="$(choose_file_from_dir "$RAW_DIR" "Choose raw video to mark")" || {
+        pause
+        continue
+      }
+
+      echo
+      read -r -p "Cut sheet name, example sci-fi-commercial-block-01: " CUT_NAME
+
+      if [ -z "$CUT_NAME" ]; then
+        BASENAME="$(basename "$RAW_FILE")"
+        CUT_NAME="${BASENAME%.*}"
+        CUT_NAME="$(echo "$CUT_NAME" | tr ' ' '-' | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]_-')"
+      fi
+
+      commercial-mark "$RAW_FILE" "$CUT_NAME" </dev/tty
+      pause
+      ;;
+
+    6)
+      RAW_FILE="$(choose_file_from_dir "$RAW_DIR" "Choose source raw video")" || {
+        pause
+        continue
+      }
+
+      CUT_FILE="$(choose_cut_sheet)" || {
+        pause
+        continue
+      }
+
+      commercial-cut-list "$RAW_FILE" "$CUT_FILE"
+      pause
+      ;;
+
+    7)
+      READY_FILE="$(choose_file_from_dir "$READY_DIR" "Choose ready commercial to copy")" || {
+        pause
+        continue
+      }
+
+      TARGET="$(choose_station_folder)" || {
+        pause
+        continue
+      }
+
+      echo
+      echo "Copying:"
+      echo "$READY_FILE"
+      echo
+      echo "To:"
+      echo "$TARGET/"
+      echo
+
+      cp "$READY_FILE" "$TARGET/"
+      echo "Done."
+      pause
+      ;;
+
+    8)
+      list_stations
+      pause
+      ;;
+
+    9)
+      echo
+      cd "$PROJECT_DIR"
+      git status
+      echo
+      git log --oneline -5
+      pause
+      ;;
+
+    0)
+      echo "Closing commercial intake bay."
+      exit 0
+      ;;
+
+    *)
+      echo "Unknown option: $CHOICE"
+      pause
+      ;;
+  esac
+done
