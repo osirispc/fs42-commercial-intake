@@ -27,3 +27,8 @@ Thumbs.db
 # Local backups
 *.bak
 *.bak.*
+
+# Local generated cut sheets and backups
+cuts/*.txt
+scripts/*.backup.*
+.gitignore.backup.*

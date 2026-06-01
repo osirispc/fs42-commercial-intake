@@ -9,6 +9,67 @@ mkdir -p "$CUTS_DIR"
 INPUT_FILE="${1:-}"
 CUT_NAME="${2:-}"
 
+normalize_time() {
+  local raw="$1"
+  local h m s
+
+  # trim spaces
+  raw="$(echo "$raw" | xargs)"
+
+  # Already HH:MM:SS or HH:MM:SS.xxx
+  if [[ "$raw" =~ ^[0-9]{1,2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?$ ]]; then
+    IFS=':' read -r h m s <<< "$raw"
+    printf "%02d:%02d:%s\n" "$h" "$m" "$s"
+    return 0
+  fi
+
+  # MM:SS or MM:SS.xxx
+  if [[ "$raw" =~ ^[0-9]{1,2}:[0-9]{2}(\.[0-9]+)?$ ]]; then
+    IFS=':' read -r m s <<< "$raw"
+    printf "00:%02d:%s\n" "$m" "$s"
+    return 0
+  fi
+
+  # M.SS / MM.SS / H.MM.SS style using dots
+  # User-friendly rule:
+  #   1.25 = 00:01:25
+  #   12.03 = 00:12:03
+  #   1.02.30 = 01:02:30
+  if [[ "$raw" =~ ^[0-9]+(\.[0-9]{1,2}){1,2}$ ]]; then
+    IFS='.' read -ra PARTS <<< "$raw"
+
+    if [ "${#PARTS[@]}" -eq 2 ]; then
+      m="${PARTS[0]}"
+      s="${PARTS[1]}"
+      printf "00:%02d:%02d\n" "$m" "$s"
+      return 0
+    fi
+
+    if [ "${#PARTS[@]}" -eq 3 ]; then
+      h="${PARTS[0]}"
+      m="${PARTS[1]}"
+      s="${PARTS[2]}"
+      printf "%02d:%02d:%02d\n" "$h" "$m" "$s"
+      return 0
+    fi
+  fi
+
+  # Seconds only
+  #   15 = 00:00:15
+  #   75 = 00:01:15
+  if [[ "$raw" =~ ^[0-9]+$ ]]; then
+    local total="$raw"
+    h=$((total / 3600))
+    m=$(((total % 3600) / 60))
+    s=$((total % 60))
+    printf "%02d:%02d:%02d\n" "$h" "$m" "$s"
+    return 0
+  fi
+
+  echo "INVALID"
+  return 1
+}
+
 if [ -z "$INPUT_FILE" ]; then
   echo "Usage:"
   echo "  commercial-mark INPUT_VIDEO [CUT_SHEET_NAME]"
@@ -40,6 +101,14 @@ if [ ! -f "$CUT_FILE" ]; then
 # Format:
 # START END NAME
 #
+# Time entry examples:
+#   15       -> 00:00:15
+#   75       -> 00:01:15
+#   1:25     -> 00:01:25
+#   1.25     -> 00:01:25
+#   12.03    -> 00:12:03
+#   1.02.30  -> 01:02:30
+#
 CUTEOF
 fi
 
@@ -55,9 +124,11 @@ echo "Cut sheet:"
 echo "$CUT_FILE"
 echo
 echo "Enter times like:"
-echo "  15"
-echo "  00:00:15"
-echo "  00:01:22.500"
+echo "  15        = 00:00:15"
+echo "  1:25      = 00:01:25"
+echo "  1.25      = 00:01:25"
+echo "  12.03     = 00:12:03"
+echo "  1.02.30   = 01:02:30"
 echo
 echo "Type q at start time to quit."
 echo
@@ -67,9 +138,9 @@ NEXT=$((COUNT + 1))
 
 while true; do
   printf "Start time for clip %02d: " "$NEXT"
-  read -r START
+  read -r START_RAW
 
-  case "$START" in
+  case "$START_RAW" in
     q|Q|quit|QUIT|exit|EXIT)
       echo
       echo "Done marking cuts."
@@ -77,16 +148,28 @@ while true; do
       ;;
   esac
 
-  if [ -z "$START" ]; then
+  if [ -z "$START_RAW" ]; then
     echo "Start time cannot be empty."
     continue
   fi
 
-  printf "End time for clip %02d: " "$NEXT"
-  read -r END
+  START="$(normalize_time "$START_RAW" || true)"
+  if [ "$START" = "INVALID" ]; then
+    echo "Invalid start time: $START_RAW"
+    continue
+  fi
 
-  if [ -z "$END" ]; then
+  printf "End time for clip %02d: " "$NEXT"
+  read -r END_RAW
+
+  if [ -z "$END_RAW" ]; then
     echo "End time cannot be empty."
+    continue
+  fi
+
+  END="$(normalize_time "$END_RAW" || true)"
+  if [ "$END" = "INVALID" ]; then
+    echo "Invalid end time: $END_RAW"
     continue
   fi
 
