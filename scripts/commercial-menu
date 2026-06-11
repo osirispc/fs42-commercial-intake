@@ -41,7 +41,6 @@ ensure_category_dirs() {
 
 choose_category() {
   ensure_category_dirs
-
   mapfile -t CATEGORIES < <(find "$CATEGORY_ROOT_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort)
 
   echo >&2
@@ -57,10 +56,7 @@ choose_category() {
 
   select PICK in "${OPTIONS[@]}"; do
     case "${PICK:-}" in
-      "No category / keep in ready")
-        printf '%s\n' ""
-        return 0
-        ;;
+      "No category / keep in ready") printf '%s\n' ""; return 0 ;;
       "Create new category")
         local NEW_CAT
         read -r -p "New category name, example 90s_commercials: " NEW_CAT </dev/tty
@@ -73,13 +69,8 @@ choose_category() {
         printf '%s\n' "$NEW_CAT"
         return 0
         ;;
-      "")
-        echo "Invalid selection." >&2
-        ;;
-      *)
-        printf '%s\n' "$PICK"
-        return 0
-        ;;
+      "") echo "Invalid selection." >&2 ;;
+      *) printf '%s\n' "$PICK"; return 0 ;;
     esac
   done
 }
@@ -89,7 +80,7 @@ choose_file_from_dir() {
   local LABEL="$2"
 
   shopt -s nullglob
-  local FILES=("$DIR"/*.mp4 "$DIR"/*.mkv "$DIR"/*.webm)
+  local FILES=("$DIR"/*.mp4 "$DIR"/*.mkv "$DIR"/*.webm "$DIR"/*.avi "$DIR"/*.mov "$DIR"/*.m4v)
 
   if [ ${#FILES[@]} -eq 0 ]; then
     echo "No video files found in: $DIR" >&2
@@ -111,7 +102,6 @@ choose_file_from_dir() {
 
 choose_ready_or_category_file() {
   ensure_category_dirs
-
   shopt -s nullglob globstar
   local FILES=("$READY_DIR"/*.mp4 "$READY_DIR"/*.mkv "$READY_DIR"/*.webm "$CATEGORY_ROOT_DIR"/*/*.mp4 "$CATEGORY_ROOT_DIR"/*/*.mkv "$CATEGORY_ROOT_DIR"/*/*.webm)
 
@@ -164,15 +154,8 @@ list_categories() {
 }
 
 move_ready_to_category() {
-  READY_FILE="$(choose_file_from_dir "$READY_DIR" "Choose ready video to file into category")" || {
-    pause
-    return 0
-  }
-
-  CATEGORY="$(choose_category)" || {
-    pause
-    return 0
-  }
+  READY_FILE="$(choose_file_from_dir "$READY_DIR" "Choose ready video to file into category")" || { pause; return 0; }
+  CATEGORY="$(choose_category)" || { pause; return 0; }
 
   if [ -z "$CATEGORY" ]; then
     echo "No category chosen. Leaving file in ready."
@@ -184,15 +167,23 @@ move_ready_to_category() {
   mkdir -p "$TARGET_DIR"
 
   echo
-  echo "Moving:"
-  echo "$READY_FILE"
-  echo
-  echo "To:"
-  echo "$TARGET_DIR/"
-  echo
-
+  echo "Moving: $READY_FILE"
+  echo "To:     $TARGET_DIR/"
   mv -f "$READY_FILE" "$TARGET_DIR/"
   echo "Done."
+  pause
+}
+
+convert_raw_to_category() {
+  RAW_FILE="$(choose_file_from_dir "$RAW_DIR" "Choose raw video to convert into ready/category")" || { pause; return 0; }
+  CATEGORY="$(choose_category)" || { pause; return 0; }
+
+  if [ -n "$CATEGORY" ]; then
+    commercial-convert-raw "$RAW_FILE" "$CATEGORY"
+  else
+    commercial-convert-raw "$RAW_FILE"
+  fi
+
   pause
 }
 
@@ -241,15 +232,16 @@ while true; do
   echo
   echo "1) Download one video, then file into category"
   echo "2) Download playlist, then file into category"
-  echo "3) List raw downloads"
-  echo "4) List ready root"
-  echo "5) List category folders"
-  echo "6) Move ready video into a category"
-  echo "7) Mark cuts for any raw video"
-  echo "8) Cut clips from a cut sheet"
-  echo "9) Copy ready/category video to a station"
-  echo "10) List station commercial folders"
-  echo "11) Show Git status"
+  echo "3) Convert existing raw video into ready/category"
+  echo "4) List raw downloads"
+  echo "5) List ready root"
+  echo "6) List category folders"
+  echo "7) Move ready video into a category"
+  echo "8) Mark cuts for any raw video"
+  echo "9) Cut clips from a cut sheet"
+  echo "10) Copy ready/category video to a station"
+  echo "11) List station commercial folders"
+  echo "12) Show Git status"
   echo "0) Exit"
   echo
   read -r -p "Choose an option: " CHOICE
@@ -259,113 +251,71 @@ while true; do
       echo
       read -r -p "Paste video URL: " URL
       CATEGORY="$(choose_category)"
-      if [ -n "$CATEGORY" ]; then
-        commercial-one "$URL" "$CATEGORY"
-      else
-        commercial-one "$URL"
-      fi
+      if [ -n "$CATEGORY" ]; then commercial-one "$URL" "$CATEGORY"; else commercial-one "$URL"; fi
       pause
       ;;
-
     2)
       echo
       read -r -p "Paste playlist URL: " URL
       CATEGORY="$(choose_category)"
-      if [ -n "$CATEGORY" ]; then
-        commercial-playlist "$URL" "$CATEGORY"
-      else
-        commercial-playlist "$URL"
-      fi
+      if [ -n "$CATEGORY" ]; then commercial-playlist "$URL" "$CATEGORY"; else commercial-playlist "$URL"; fi
       pause
       ;;
-
     3)
+      convert_raw_to_category
+      ;;
+    4)
       echo
       echo "Raw downloads:"
       ls -lh "$RAW_DIR" || true
       pause
       ;;
-
-    4)
+    5)
       echo
       echo "Ready root:"
       ls -lh "$READY_DIR" || true
       pause
       ;;
-
-    5)
+    6)
       list_categories
       pause
       ;;
-
-    6)
+    7)
       move_ready_to_category
       ;;
-
-    7)
-      RAW_FILE="$(choose_file_from_dir "$RAW_DIR" "Choose raw video to mark")" || {
-        pause
-        continue
-      }
-
+    8)
+      RAW_FILE="$(choose_file_from_dir "$RAW_DIR" "Choose raw video to mark")" || { pause; continue; }
       echo
       read -r -p "Cut sheet name, example sci-fi-commercial-block-01: " CUT_NAME
-
       if [ -z "$CUT_NAME" ]; then
         BASENAME="$(basename "$RAW_FILE")"
         CUT_NAME="${BASENAME%.*}"
         CUT_NAME="$(echo "$CUT_NAME" | tr ' ' '-' | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]_-')"
       fi
-
       commercial-mark "$RAW_FILE" "$CUT_NAME" </dev/tty
       pause
       ;;
-
-    8)
-      RAW_FILE="$(choose_file_from_dir "$RAW_DIR" "Choose source raw video")" || {
-        pause
-        continue
-      }
-
-      CUT_FILE="$(choose_cut_sheet)" || {
-        pause
-        continue
-      }
-
+    9)
+      RAW_FILE="$(choose_file_from_dir "$RAW_DIR" "Choose source raw video")" || { pause; continue; }
+      CUT_FILE="$(choose_cut_sheet)" || { pause; continue; }
       commercial-cut-list "$RAW_FILE" "$CUT_FILE"
       pause
       ;;
-
-    9)
-      READY_FILE="$(choose_ready_or_category_file)" || {
-        pause
-        continue
-      }
-
-      TARGET="$(choose_station_folder)" || {
-        pause
-        continue
-      }
-
+    10)
+      READY_FILE="$(choose_ready_or_category_file)" || { pause; continue; }
+      TARGET="$(choose_station_folder)" || { pause; continue; }
       echo
-      echo "Copying:"
-      echo "$READY_FILE"
-      echo
-      echo "To:"
-      echo "$TARGET/"
-      echo
-
+      echo "Copying: $READY_FILE"
+      echo "To:      $TARGET/"
       cp "$READY_FILE" "$TARGET/"
       echo "Done."
       pause
       ;;
-
-    10)
+    11)
       list_stations
       pause
       ;;
-
-    11)
+    12)
       echo
       cd "$PROJECT_DIR"
       git status
@@ -373,12 +323,10 @@ while true; do
       git log --oneline -5
       pause
       ;;
-
     0)
       echo "Closing commercial intake bay."
       exit 0
       ;;
-
     *)
       echo "Unknown option: $CHOICE"
       pause
