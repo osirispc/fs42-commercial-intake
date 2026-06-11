@@ -14,14 +14,26 @@ fi
 source "$CONFIG_FILE"
 
 URL="${1:-}"
+CATEGORY="${2:-}"
 
 if [ -z "$URL" ]; then
   echo "Usage:"
-  echo "  commercial-playlist 'YOUTUBE_PLAYLIST_URL'"
+  echo "  commercial-playlist 'YOUTUBE_PLAYLIST_URL' [category]"
   exit 1
 fi
 
-mkdir -p "$RAW_DIR" "$READY_DIR"
+CATEGORY_ROOT_DIR="${CATEGORY_ROOT_DIR:-$READY_DIR}"
+AUTO_COPY_TO_FS42="${AUTO_COPY_TO_FS42:-0}"
+
+mkdir -p "$RAW_DIR" "$READY_DIR" "$CATEGORY_ROOT_DIR"
+
+if [ -n "$CATEGORY" ]; then
+  CATEGORY="$(echo "$CATEGORY" | tr ' ' '_' | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]_-')"
+  CATEGORY_DIR="$CATEGORY_ROOT_DIR/$CATEGORY"
+  mkdir -p "$CATEGORY_DIR"
+else
+  CATEGORY_DIR="$READY_DIR"
+fi
 
 echo "[COMMERCIAL INTAKE] Project: $PROJECT_DIR"
 echo "[COMMERCIAL INTAKE] Downloading playlist..."
@@ -36,12 +48,14 @@ echo "[COMMERCIAL INTAKE] Downloading playlist..."
 echo "[COMMERCIAL INTAKE] Converting raw files..."
 
 shopt -s nullglob
+converted_files=()
 
 for f in "$RAW_DIR"/*.mp4 "$RAW_DIR"/*.webm "$RAW_DIR"/*.mkv; do
   base="$(basename "$f")"
   name="${base%.*}"
+  output_file="$READY_DIR/${name}.mp4"
 
-  if [ -f "$READY_DIR/${name}.mp4" ]; then
+  if [ -f "$output_file" ] || { [ -n "$CATEGORY" ] && [ -f "$CATEGORY_DIR/${name}.mp4" ]; }; then
     echo "Skipping already converted: $name"
     continue
   fi
@@ -53,16 +67,31 @@ for f in "$RAW_DIR"/*.mp4 "$RAW_DIR"/*.webm "$RAW_DIR"/*.mkv; do
     -c:v libx264 -preset veryfast -crf "$VIDEO_CRF" \
     -c:a aac -b:a "$AUDIO_BITRATE" \
     -movflags +faststart \
-    "$READY_DIR/${name}.mp4"
+    "$output_file"
+
+  if [ -n "$CATEGORY" ]; then
+    mv -f "$output_file" "$CATEGORY_DIR/"
+    converted_files+=("$CATEGORY_DIR/${name}.mp4")
+  else
+    converted_files+=("$output_file")
+  fi
 done
 
-if [ -n "${FS42_COMMERCIAL_DIR:-}" ] && [ -d "$FS42_COMMERCIAL_DIR" ]; then
+if [ -n "$CATEGORY" ]; then
   echo
-  echo "[COMMERCIAL INTAKE] Copying ready commercials to FieldStation42..."
-  cp "$READY_DIR"/*.mp4 "$FS42_COMMERCIAL_DIR/" 2>/dev/null || true
-  echo "Copied to: $FS42_COMMERCIAL_DIR"
+  echo "Playlist commercials filed in category:"
+  echo "$CATEGORY_DIR"
+else
+  echo
+  echo "Playlist commercials ready in:"
+  echo "$READY_DIR"
 fi
 
-echo
-echo "Playlist commercials ready in:"
-echo "$READY_DIR"
+if [ "$AUTO_COPY_TO_FS42" = "1" ] && [ -n "${FS42_COMMERCIAL_DIR:-}" ] && [ -d "$FS42_COMMERCIAL_DIR" ]; then
+  echo
+  echo "[COMMERCIAL INTAKE] Copying converted files to FieldStation42..."
+  for f in "${converted_files[@]}"; do
+    cp "$f" "$FS42_COMMERCIAL_DIR/"
+  done
+  echo "Copied to: $FS42_COMMERCIAL_DIR"
+fi
