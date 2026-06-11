@@ -9,18 +9,79 @@ if [ -f "$CONFIG_FILE" ]; then
 else
   RAW_DIR="$HOME/Videos/fieldstation42-commercials/raw"
   READY_DIR="$HOME/Videos/fieldstation42-commercials/ready"
+  CATEGORY_ROOT_DIR="$READY_DIR"
+  CATEGORY_LIST="commercials mtv 90s_commercials bumpers trailers station_ids"
 fi
 
 RAW_DIR="${RAW_DIR:-$HOME/Videos/fieldstation42-commercials/raw}"
 READY_DIR="${READY_DIR:-$HOME/Videos/fieldstation42-commercials/ready}"
+CATEGORY_ROOT_DIR="${CATEGORY_ROOT_DIR:-$READY_DIR}"
+CATEGORY_LIST="${CATEGORY_LIST:-commercials mtv 90s_commercials bumpers trailers station_ids}"
 CUTS_DIR="$PROJECT_DIR/cuts"
 FS42_DIR="$HOME/projects/FieldStation42"
 
-mkdir -p "$RAW_DIR" "$READY_DIR" "$CUTS_DIR"
+mkdir -p "$RAW_DIR" "$READY_DIR" "$CATEGORY_ROOT_DIR" "$CUTS_DIR"
 
 pause() {
   echo
   read -r -p "Press Enter to return to menu..."
+}
+
+slugify_category() {
+  echo "$1" | tr ' ' '_' | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]_-'
+}
+
+ensure_category_dirs() {
+  local CAT
+  for CAT in $CATEGORY_LIST; do
+    CAT="$(slugify_category "$CAT")"
+    [ -n "$CAT" ] && mkdir -p "$CATEGORY_ROOT_DIR/$CAT"
+  done
+}
+
+choose_category() {
+  ensure_category_dirs
+
+  mapfile -t CATEGORIES < <(find "$CATEGORY_ROOT_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort)
+
+  echo >&2
+  echo "Choose category folder:" >&2
+  echo "---------------------------------------------" >&2
+
+  local OPTIONS=()
+  OPTIONS+=("No category / keep in ready")
+  for CAT in "${CATEGORIES[@]}"; do
+    OPTIONS+=("$CAT")
+  done
+  OPTIONS+=("Create new category")
+
+  select PICK in "${OPTIONS[@]}"; do
+    case "${PICK:-}" in
+      "No category / keep in ready")
+        printf '%s\n' ""
+        return 0
+        ;;
+      "Create new category")
+        local NEW_CAT
+        read -r -p "New category name, example 90s_commercials: " NEW_CAT </dev/tty
+        NEW_CAT="$(slugify_category "$NEW_CAT")"
+        if [ -z "$NEW_CAT" ]; then
+          echo "Category cannot be blank." >&2
+          continue
+        fi
+        mkdir -p "$CATEGORY_ROOT_DIR/$NEW_CAT"
+        printf '%s\n' "$NEW_CAT"
+        return 0
+        ;;
+      "")
+        echo "Invalid selection." >&2
+        ;;
+      *)
+        printf '%s\n' "$PICK"
+        return 0
+        ;;
+    esac
+  done
 }
 
 choose_file_from_dir() {
@@ -37,6 +98,30 @@ choose_file_from_dir() {
 
   echo >&2
   echo "$LABEL" >&2
+  echo "---------------------------------------------" >&2
+
+  select FILE in "${FILES[@]}"; do
+    if [ -n "${FILE:-}" ]; then
+      printf '%s\n' "$FILE"
+      return 0
+    fi
+    echo "Invalid selection." >&2
+  done
+}
+
+choose_ready_or_category_file() {
+  ensure_category_dirs
+
+  shopt -s nullglob globstar
+  local FILES=("$READY_DIR"/*.mp4 "$READY_DIR"/*.mkv "$READY_DIR"/*.webm "$CATEGORY_ROOT_DIR"/*/*.mp4 "$CATEGORY_ROOT_DIR"/*/*.mkv "$CATEGORY_ROOT_DIR"/*/*.webm)
+
+  if [ ${#FILES[@]} -eq 0 ]; then
+    echo "No ready/category video files found under: $CATEGORY_ROOT_DIR" >&2
+    return 1
+  fi
+
+  echo >&2
+  echo "Choose ready/category video:" >&2
   echo "---------------------------------------------" >&2
 
   select FILE in "${FILES[@]}"; do
@@ -70,6 +155,47 @@ choose_cut_sheet() {
   done
 }
 
+list_categories() {
+  ensure_category_dirs
+  echo
+  echo "Category folders:"
+  echo "---------------------------------------------"
+  find "$CATEGORY_ROOT_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort
+}
+
+move_ready_to_category() {
+  READY_FILE="$(choose_file_from_dir "$READY_DIR" "Choose ready video to file into category")" || {
+    pause
+    return 0
+  }
+
+  CATEGORY="$(choose_category)" || {
+    pause
+    return 0
+  }
+
+  if [ -z "$CATEGORY" ]; then
+    echo "No category chosen. Leaving file in ready."
+    pause
+    return 0
+  fi
+
+  TARGET_DIR="$CATEGORY_ROOT_DIR/$CATEGORY"
+  mkdir -p "$TARGET_DIR"
+
+  echo
+  echo "Moving:"
+  echo "$READY_FILE"
+  echo
+  echo "To:"
+  echo "$TARGET_DIR/"
+  echo
+
+  mv -f "$READY_FILE" "$TARGET_DIR/"
+  echo "Done."
+  pause
+}
+
 list_stations() {
   echo
   echo "Detected FieldStation42 station commercial folders:"
@@ -101,24 +227,29 @@ choose_station_folder() {
 
 while true; do
   clear
+  ensure_category_dirs
+
   echo "================================================="
   echo " FIELDSTATION42 COMMERCIAL INTAKE BAY"
   echo "================================================="
   echo
-  echo "Project: $PROJECT_DIR"
-  echo "Raw:     $RAW_DIR"
-  echo "Ready:   $READY_DIR"
-  echo "Cuts:    $CUTS_DIR"
+  echo "Project:    $PROJECT_DIR"
+  echo "Raw:        $RAW_DIR"
+  echo "Ready:      $READY_DIR"
+  echo "Categories: $CATEGORY_ROOT_DIR"
+  echo "Cuts:       $CUTS_DIR"
   echo
-  echo "1) Download one YouTube video"
-  echo "2) Download YouTube playlist"
+  echo "1) Download one video, then file into category"
+  echo "2) Download playlist, then file into category"
   echo "3) List raw downloads"
-  echo "4) List ready commercials"
-  echo "5) Mark cuts for any raw video"
-  echo "6) Cut clips from a cut sheet"
-  echo "7) Copy one ready commercial to a station"
-  echo "8) List station commercial folders"
-  echo "9) Show Git status"
+  echo "4) List ready root"
+  echo "5) List category folders"
+  echo "6) Move ready video into a category"
+  echo "7) Mark cuts for any raw video"
+  echo "8) Cut clips from a cut sheet"
+  echo "9) Copy ready/category video to a station"
+  echo "10) List station commercial folders"
+  echo "11) Show Git status"
   echo "0) Exit"
   echo
   read -r -p "Choose an option: " CHOICE
@@ -126,15 +257,25 @@ while true; do
   case "$CHOICE" in
     1)
       echo
-      read -r -p "Paste YouTube video URL: " URL
-      commercial-one "$URL"
+      read -r -p "Paste video URL: " URL
+      CATEGORY="$(choose_category)"
+      if [ -n "$CATEGORY" ]; then
+        commercial-one "$URL" "$CATEGORY"
+      else
+        commercial-one "$URL"
+      fi
       pause
       ;;
 
     2)
       echo
-      read -r -p "Paste YouTube playlist URL: " URL
-      commercial-playlist "$URL"
+      read -r -p "Paste playlist URL: " URL
+      CATEGORY="$(choose_category)"
+      if [ -n "$CATEGORY" ]; then
+        commercial-playlist "$URL" "$CATEGORY"
+      else
+        commercial-playlist "$URL"
+      fi
       pause
       ;;
 
@@ -147,12 +288,21 @@ while true; do
 
     4)
       echo
-      echo "Ready commercials:"
+      echo "Ready root:"
       ls -lh "$READY_DIR" || true
       pause
       ;;
 
     5)
+      list_categories
+      pause
+      ;;
+
+    6)
+      move_ready_to_category
+      ;;
+
+    7)
       RAW_FILE="$(choose_file_from_dir "$RAW_DIR" "Choose raw video to mark")" || {
         pause
         continue
@@ -171,7 +321,7 @@ while true; do
       pause
       ;;
 
-    6)
+    8)
       RAW_FILE="$(choose_file_from_dir "$RAW_DIR" "Choose source raw video")" || {
         pause
         continue
@@ -186,8 +336,8 @@ while true; do
       pause
       ;;
 
-    7)
-      READY_FILE="$(choose_file_from_dir "$READY_DIR" "Choose ready commercial to copy")" || {
+    9)
+      READY_FILE="$(choose_ready_or_category_file)" || {
         pause
         continue
       }
@@ -210,12 +360,12 @@ while true; do
       pause
       ;;
 
-    8)
+    10)
       list_stations
       pause
       ;;
 
-    9)
+    11)
       echo
       cd "$PROJECT_DIR"
       git status
