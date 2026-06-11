@@ -14,17 +14,32 @@ fi
 source "$CONFIG_FILE"
 
 URL="${1:-}"
+CATEGORY="${2:-}"
 
 if [ -z "$URL" ]; then
   echo "Usage:"
-  echo "  commercial-one 'YOUTUBE_VIDEO_URL'"
+  echo "  commercial-one 'YOUTUBE_VIDEO_URL' [category]"
   exit 1
 fi
 
-mkdir -p "$RAW_DIR" "$READY_DIR"
+CATEGORY_ROOT_DIR="${CATEGORY_ROOT_DIR:-$READY_DIR}"
+AUTO_COPY_TO_FS42="${AUTO_COPY_TO_FS42:-0}"
+
+mkdir -p "$RAW_DIR" "$READY_DIR" "$CATEGORY_ROOT_DIR"
+
+if [ -n "$CATEGORY" ]; then
+  CATEGORY="$(echo "$CATEGORY" | tr ' ' '_' | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]_-')"
+  CATEGORY_DIR="$CATEGORY_ROOT_DIR/$CATEGORY"
+  mkdir -p "$CATEGORY_DIR"
+else
+  CATEGORY_DIR="$READY_DIR"
+fi
 
 echo "[COMMERCIAL INTAKE] Project: $PROJECT_DIR"
 echo "[COMMERCIAL INTAKE] Downloading one video..."
+
+before_marker="$(mktemp)"
+find "$RAW_DIR" -maxdepth 1 -type f -printf '%p\n' 2>/dev/null | sort > "$before_marker" || true
 
 "${YTDLP_BIN:-yt-dlp}" \
   --no-playlist \
@@ -34,6 +49,7 @@ echo "[COMMERCIAL INTAKE] Downloading one video..."
   "$URL"
 
 latest="$(find "$RAW_DIR" -maxdepth 1 -type f -printf '%T@ %p\n' | sort -nr | head -n 1 | cut -d' ' -f2-)"
+rm -f "$before_marker"
 
 if [ -z "$latest" ]; then
   echo "No downloaded file found."
@@ -42,6 +58,7 @@ fi
 
 base="$(basename "$latest")"
 name="${base%.*}"
+output_file="$READY_DIR/${name}.mp4"
 
 echo "[COMMERCIAL INTAKE] Converting for FieldStation42..."
 
@@ -50,15 +67,27 @@ ffmpeg -y -i "$latest" \
   -c:v libx264 -preset veryfast -crf "$VIDEO_CRF" \
   -c:a aac -b:a "$AUDIO_BITRATE" \
   -movflags +faststart \
-  "$READY_DIR/${name}.mp4"
+  "$output_file"
 
 echo
 echo "Commercial ready:"
-echo "$READY_DIR/${name}.mp4"
+echo "$output_file"
 
-if [ -n "${FS42_COMMERCIAL_DIR:-}" ] && [ -d "$FS42_COMMERCIAL_DIR" ]; then
+if [ -n "$CATEGORY" ]; then
+  echo
+  echo "[COMMERCIAL INTAKE] Filing into category: $CATEGORY"
+  mv -f "$output_file" "$CATEGORY_DIR/"
+  echo "Filed to: $CATEGORY_DIR/$(basename "$output_file")"
+fi
+
+if [ "$AUTO_COPY_TO_FS42" = "1" ] && [ -n "${FS42_COMMERCIAL_DIR:-}" ] && [ -d "$FS42_COMMERCIAL_DIR" ]; then
+  copy_source="$output_file"
+  if [ -n "$CATEGORY" ]; then
+    copy_source="$CATEGORY_DIR/$(basename "$output_file")"
+  fi
+
   echo
   echo "[COMMERCIAL INTAKE] Copying to FieldStation42..."
-  cp "$READY_DIR/${name}.mp4" "$FS42_COMMERCIAL_DIR/"
+  cp "$copy_source" "$FS42_COMMERCIAL_DIR/"
   echo "Copied to: $FS42_COMMERCIAL_DIR"
 fi
