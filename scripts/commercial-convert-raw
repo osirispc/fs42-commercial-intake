@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+PROJECT_DIR="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
+CONFIG_FILE="$PROJECT_DIR/config/intake.env"
+
+if [ ! -f "$CONFIG_FILE" ]; then
+  echo "Missing config file:"
+  echo "$CONFIG_FILE"
+  exit 1
+fi
+
+source "$CONFIG_FILE"
+
+RAW_FILE="${1:-}"
+CATEGORY="${2:-}"
+
+if [ -z "$RAW_FILE" ]; then
+  echo "Usage:"
+  echo "  commercial-convert-raw '/path/to/raw-video.mp4' [category]"
+  exit 1
+fi
+
+if [ ! -f "$RAW_FILE" ]; then
+  echo "Raw file not found: $RAW_FILE"
+  exit 1
+fi
+
+CATEGORY_ROOT_DIR="${CATEGORY_ROOT_DIR:-$READY_DIR}"
+AUTO_COPY_TO_FS42="${AUTO_COPY_TO_FS42:-0}"
+
+mkdir -p "$READY_DIR" "$CATEGORY_ROOT_DIR"
+
+if [ -n "$CATEGORY" ]; then
+  CATEGORY="$(echo "$CATEGORY" | tr ' ' '_' | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]_-')"
+  CATEGORY_DIR="$CATEGORY_ROOT_DIR/$CATEGORY"
+  mkdir -p "$CATEGORY_DIR"
+else
+  CATEGORY_DIR="$READY_DIR"
+fi
+
+base="$(basename "$RAW_FILE")"
+name="${base%.*}"
+output_file="$READY_DIR/${name}.mp4"
+
+echo "[COMMERCIAL INTAKE] Converting existing raw file..."
+echo "Raw: $RAW_FILE"
+
+ffmpeg -y -i "$RAW_FILE" \
+  -vf "scale='min(1280,iw)':-2,fps=30" \
+  -c:v libx264 -preset veryfast -crf "$VIDEO_CRF" \
+  -c:a aac -b:a "$AUDIO_BITRATE" \
+  -movflags +faststart \
+  "$output_file"
+
+echo
+echo "Commercial ready:"
+echo "$output_file"
+
+if [ -n "$CATEGORY" ]; then
+  echo
+  echo "[COMMERCIAL INTAKE] Filing into category: $CATEGORY"
+  mv -f "$output_file" "$CATEGORY_DIR/"
+  output_file="$CATEGORY_DIR/$(basename "$output_file")"
+  echo "Filed to: $output_file"
+fi
+
+if [ "$AUTO_COPY_TO_FS42" = "1" ] && [ -n "${FS42_COMMERCIAL_DIR:-}" ] && [ -d "$FS42_COMMERCIAL_DIR" ]; then
+  echo
+  echo "[COMMERCIAL INTAKE] Copying to FieldStation42..."
+  cp "$output_file" "$FS42_COMMERCIAL_DIR/"
+  echo "Copied to: $FS42_COMMERCIAL_DIR"
+fi
